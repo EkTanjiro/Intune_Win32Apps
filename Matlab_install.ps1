@@ -22,7 +22,7 @@
 
 # Centralized variables
 $MATLABVersion = "R2024b"  # Update the version here for different installs (e.g., "R2025b")
-$fileInstallationKey = "08123-49505-54398-39788-05426-14261-55409-25907-15189-45789-09751-54713-34396-42753-51056-10851-42435-07094-05946-14469-27014-33793-45111-07480-56852-32648"
+$fileInstallationKey = "31468-39701-35950-32255-54389-57202-06793 example key" # Update `$fileInstallationKey` with the new key provided by MathWorks.
 $scriptDirectory = $PSScriptRoot # Directory where the script is located
 
 # Check for administrative privileges
@@ -40,8 +40,8 @@ if (-not (Test-Path $tempDirectory)) {
 
 $logFile = "$tempDirectory\MatlabInstall_$MATLABVersion.log"
 $inputFile = "$MATLABVersion_install_input.txt"
-$licenseServer = "metztli.sdsu.edu"
-$licenseIP = "146.244.101.134"
+$licenseServer = "changeme.edu" # Update to Matlab license server FQDN 
+$licenseIP = "192.168.200.200" # Update to Matlab license server IP address
 $licensePort = "1701"
 $extractPath = "$tempDirectory\$MATLABVersion"  # Extract to C:\Temp\$MATLABVersion
 $installDir = "C:\Program Files\MATLAB\$MATLABVersion"  # Correct MATLAB install directory for Windows
