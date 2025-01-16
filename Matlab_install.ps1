@@ -1,35 +1,148 @@
-# Synopsis:
-# This PowerShell script automates the installation process of MATLAB R2023a.
-# It extracts the contents of a zip file, runs the setup.exe file with an input file,
-# copies the license file to the installation directory, and cleans up the extraction directory.
-# installer_input & network.lic should be in the same folder as setup.exe
+# ============================================================================
+# MATLAB Installation Script
+#
+# SYNOPSIS:
+# This script automates the process of installing MATLAB on Windows. It scans the directory
+# where the script is located for either a ZIP or ISO installation file, extracts or mounts it,
+# and runs the MATLAB setup with a pre-defined configuration.
+#
+# It also:
+# 1. Creates a specific install input file (e.g., R2024b_install_input.txt).
+# 2. Installs MATLAB using that input file.
+# 3. Creates a network license file (network.lic) in the MATLAB installation folder.
+#
+# GUIDE FOR UPDATING VERSION AND INSTALLATION KEY:
+# - To update the MATLAB version, change the value of the `$MATLABVersion` variable.
+#   Example: For MATLAB R2024b, change `$MATLABVersion = "R2024b"` to `$MATLABVersion = "R2025a"`.
+#
+# - To update the installation key, change the value of the `$fileInstallationKey` variable.
+#   Example: For a new installation key, update `$fileInstallationKey` with the new key provided by MathWorks.
+#
+# ============================================================================
 
-$packageName = "Matlab R2023a"
-$setupFile = "setup.exe"
-$inputFile = "installer_input.txt"
-$zipFile = "r2023a.zip"
-$extractPath = "C:\Temp\r2023a"
-$logFile = "C:\Temp\MatlabInstall.log"
-$licFile = "network.lic"
-$installDir = "C:\Program Files\MATLAB\R2023a"
+# Centralized variables
+$MATLABVersion = "R2024b"  # Update the version here for different installs (e.g., "R2025b")
+$fileInstallationKey = "31468-39701-35950-32255-54389-57202-06793 example key" # Update `$fileInstallationKey` with the new key provided by MathWorks.
+$scriptDirectory = $PSScriptRoot # Directory where the script is located
+$logFile = "C:\Temp\MatlabInstall_$MATLABVersion.log"
+$inputFile = "$MATLABVersion_install_input.txt"
+$licenseServer = "changeme.edu" # Update to Matlab license server FQDN 
+$licenseIP = "192.168.200.200" # Update to Matlab license server IP address
+$licensePort = "1701"
+$extractPath = "C:\Temp\$MATLABVersion"  # Extract to C:\Temp\$MATLABVersion
+$installDir = "C:\Program Files\MATLAB\$MATLABVersion"  # Correct MATLAB install directory for Windows
 
-# Create a log file
-Start-Transcript -Path $logFile
+# Log function
+function Log-Message {
+    param (
+        [string]$message,
+        [string]$level = "INFO"
+    )
+    
+    $currentDate = Get-Date -Format "MM/dd/yyyy hh:mm tt"
+    $logEntry = "$currentDate [$level] $message"
+    
+    # Append the log entry to the log file
+    Add-Content -Path $logFile -Value $logEntry
+}
 
-# Extract the contents of the zip file to the destination directory
-Expand-Archive -Path "$PSScriptRoot\$zipFile" -DestinationPath $extractPath
+# Initialize log file
+if (Test-Path $logFile) {
+    Log-Message "Appending log to existing file"
+} else {
+    New-Item -Path $logFile -ItemType File
+    Log-Message "Creating a new log file"
+}
 
-# Run the setup.exe file with the input file "installer_input.txt"
-Start-Process -FilePath "$extractPath\$setupFile" -ArgumentList "-inputFile $extractPath\$inputFile" -Wait
+# Step 1: Scan for either ZIP or ISO file in the script's directory
+$installFile = Get-ChildItem -Path $scriptDirectory -Filter "*.zip, *.iso" -File | Select-Object -First 1
 
-# Create the licenses folder in the Matlab installation directory
-New-Item -Path "$installDir\licenses" -ItemType Directory -Force
+if ($installFile) {
+    $installFileName = $installFile.Name
+    Log-Message "Found installation file: $installFileName"
+} else {
+    Log-Message "No ZIP or ISO file found in the script directory. Installation aborted." "ERROR"
+    exit 1
+}
 
-# Copy the license file to the Matlab licenses directory
-Copy-Item -Path "$extractPath\$licFile" -Destination "$installDir\licenses" -Force
+# Step 2: If ZIP file, extract it; if ISO file, mount it
+if ($installFile.Extension -eq ".zip") {
+    # Extract ZIP file
+    try {
+        Log-Message "Extracting ZIP file $installFileName to $extractPath"
+        Expand-Archive -Path "$scriptDirectory\$installFileName" -DestinationPath $extractPath -Force
+        Log-Message "ZIP file extracted to $extractPath"
+    } catch {
+        Log-Message "Error extracting ZIP file: $($_.Exception.Message)" "ERROR"
+        exit 1
+    }
+} elseif ($installFile.Extension -eq ".iso") {
+    # Mount ISO file
+    try {
+        $mountedDrive = Mount-DiskImage -ImagePath "$scriptDirectory\$installFileName" -PassThru | Get-Volume | Select-Object -First 1
+        $isoDriveLetter = $mountedDrive.DriveLetter
+        $isoPath = "$isoDriveLetter`:\"
+        Log-Message "Mounted ISO file at $isoPath"
+    } catch {
+        Log-Message "Error mounting ISO file: $($_.Exception.Message)" "ERROR"
+        exit 1
+    }
+}
 
-# Delete the extraction directory
-Remove-Item -Path $extractPath -Recurse -Force
+# Step 3: Create the install_input.txt for the specific MATLAB version (R2023b_install_input.txt)
+try {
+    $installInputContent = @"
+fileInstallationKey=$fileInstallationKey
+destinationFolder=$installDir
+agreeToLicense=yes
+setFileAssoc=true
+desktopShortcut=true
+startMenuShortcut=true
+createAccelTask=false
+enableLNU=no
+improveMATLAB=no
+"@
+    $installInputPath = "$extractPath\$inputFile"
+    Set-Content -Path $installInputPath -Value $installInputContent
+    Log-Message "Created install input file $inputFile at $installInputPath"
+} catch {
+    Log-Message "Error creating install input file: $($_.Exception.Message)" "ERROR"
+    exit 1
+}
 
-# Stop logging
-Stop-Transcript
+# Step 4: Run the MATLAB installer (from extracted or mounted ISO path)
+$setupFilePath = if ($installFile.Extension -eq ".zip") { "$extractPath\setup.exe" } else { "$isoPath\setup.exe" }
+
+if (Test-Path $setupFilePath) {
+    try {
+        $argumentList = "-inputFile $installInputPath"
+        Log-Message "Running MATLAB installer from $setupFilePath with input file $installInputPath"
+        Start-Process -FilePath $setupFilePath -ArgumentList $argumentList -Wait -ErrorAction Stop
+        Log-Message "Executed $setupFilePath with input file $installInputPath"
+    } catch {
+        Log-Message "Error executing $setupFilePath: $($_.Exception.Message)" "ERROR"
+        exit 1
+    }
+} else {
+    Log-Message "$setupFilePath not found. Installation aborted." "ERROR"
+    exit 1
+}
+
+# Step 5: Create the network.lic file in the MATLAB install folder
+try {
+    $networkLicContent = @"
+SERVER $licenseServer INTERNET=$licenseIP $licensePort
+USE_SERVER
+"@
+    # Ensure the installation directory exists, then create the network.lic file
+    $licFolderPath = "$installDir\licenses"
+    New-Item -Path $licFolderPath -ItemType Directory -Force | Out-Null
+    Set-Content -Path "$licFolderPath\network.lic" -Value $networkLicContent
+    Log-Message "Created network.lic file at $licFolderPath\network.lic"
+} catch {
+    Log-Message "Error creating network.lic file: $($_.Exception.Message)" "ERROR"
+    exit 1
+}
+
+# Step 6: Log completion message
+Log-Message "Installation of MATLAB $MATLABVersion completed" "INFO"
