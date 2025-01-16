@@ -22,8 +22,15 @@
 
 # Centralized variables
 $MATLABVersion = "R2024b"  # Update the version here for different installs (e.g., "R2025b")
-$fileInstallationKey = "09751-54713-34396-42753-51056-10851-42435-07094-05946-14469-06793 example key" # Update `$fileInstallationKey` with the new key provided by MathWorks.
+$fileInstallationKey = "08123-49505-54398-39788-05426-14261-55409-25907-15189-45789-09751-54713-34396-42753-51056-10851-42435-07094-05946-14469-27014-33793-45111-07480-56852-32648"
 $scriptDirectory = $PSScriptRoot # Directory where the script is located
+
+# Check for administrative privileges
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Host "Restarting script as administrator..."
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -Verb RunAs
+    exit
+}
 
 # Ensure Temp directory exists
 $tempDirectory = "C:\Temp"
@@ -33,8 +40,8 @@ if (-not (Test-Path $tempDirectory)) {
 
 $logFile = "$tempDirectory\MatlabInstall_$MATLABVersion.log"
 $inputFile = "$MATLABVersion_install_input.txt"
-$licenseServer = "changeme.edu" # Update to Matlab license server FQDN 
-$licenseIP = "192.168.200.200" # Update to Matlab license server IP address
+$licenseServer = "metztli.sdsu.edu"
+$licenseIP = "146.244.101.134"
 $licensePort = "1701"
 $extractPath = "$tempDirectory\$MATLABVersion"  # Extract to C:\Temp\$MATLABVersion
 $installDir = "C:\Program Files\MATLAB\$MATLABVersion"  # Correct MATLAB install directory for Windows
@@ -74,6 +81,14 @@ if ($installFile) {
 
 # Step 2: If ZIP file, extract it; if ISO file, mount it
 if ($installFile.Extension -eq ".zip") {
+    # Unblock the ZIP file to prevent security warnings
+    try {
+        Log-Message "Unblocking ZIP file $installFileName"
+        Unblock-File -Path "$scriptDirectory\$installFileName"
+    } catch {
+        Log-Message "Failed to unblock ZIP file: $($_.Exception.Message)" "WARNING"
+    }
+
     # Extract ZIP file
     try {
         Log-Message "Extracting ZIP file $installFileName to $extractPath"
@@ -84,12 +99,35 @@ if ($installFile.Extension -eq ".zip") {
         exit 1
     }
 } elseif ($installFile.Extension -eq ".iso") {
-    # Mount ISO file
+    # Unblock the ISO file to prevent security warnings
     try {
-        $mountedDrive = Mount-DiskImage -ImagePath "$scriptDirectory\$installFileName" -PassThru | Get-Volume | Select-Object -First 1
+        Log-Message "Unblocking ISO file $installFileName"
+        Unblock-File -Path "$scriptDirectory\$installFileName"
+    } catch {
+        Log-Message "Failed to unblock ISO file: $($_.Exception.Message)" "WARNING"
+    }
+	# Disable AutoPlay to suppress ISO pop-ups globally
+	try {
+		Log-Message "Disabling AutoPlay for this session to suppress ISO pop-ups"
+		Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" -Name "DisableAutoplay" -Value 1
+		$autoplayStatus = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers").DisableAutoplay
+    if ($autoplayStatus -eq 1) {
+        Log-Message "AutoPlay disabled successfully"
+    } else {
+        Log-Message "Failed to disable AutoPlay. Proceeding cautiously." "WARNING"
+    }
+} catch {
+    Log-Message "Error disabling AutoPlay: $($_.Exception.Message)" "WARNING"
+}
+
+    # Mount ISO file without triggering pop-up
+    try {
+        Log-Message "Mounting ISO file $installFileName"
+        $mountResult = Mount-DiskImage -ImagePath "$scriptDirectory\$installFileName" -PassThru
+        $mountedDrive = $mountResult | Get-Volume | Select-Object -First 1
         $isoDriveLetter = $mountedDrive.DriveLetter
-        $isoPath = "$isoDriveLetter`:\"  # Mount location of the ISO
-        Log-Message "Mounted ISO file at $isoPath"
+        $isoPath = "$isoDriveLetter`:\"
+        Log-Message "Mounted ISO file at $isoPath without triggering pop-up"
     } catch {
         Log-Message "Error mounting ISO file: $($_.Exception.Message)" "ERROR"
         exit 1
@@ -159,19 +197,58 @@ if (Test-Path $setupFilePath) {
 
 # Step 5: Create the network.lic file in the MATLAB install folder
 try {
+    $licFolderPath = "$installDir\licenses"
+
+    # Ensure the installation directory and licenses folder exist
+    if (-not (Test-Path -Path $licFolderPath)) {
+        Log-Message "Creating licenses folder at $licFolderPath"
+        New-Item -Path $licFolderPath -ItemType Directory -Force | Out-Null
+    }
+
+    # Create the network.lic file
     $networkLicContent = @"
 SERVER $licenseServer INTERNET=$licenseIP $licensePort
 USE_SERVER
 "@
-    # Ensure the installation directory exists, then create the network.lic file
-    $licFolderPath = "$installDir\licenses"
-    New-Item -Path $licFolderPath -ItemType Directory -Force | Out-Null
     Set-Content -Path "$licFolderPath\network.lic" -Value $networkLicContent
     Log-Message "Created network.lic file at $licFolderPath\network.lic"
 } catch {
-    Log-Message "Error creating network.lic file: $($_.Exception.Message)" "ERROR"
+    Log-Message "Error creating network.lic file or licenses folder: $($_.Exception.Message)" "ERROR"
     exit 1
 }
 
-# Step 6: Log completion message
+# Step 6: Cleanup (Unmount ISO and delete temporary folder)
+try {
+    # Unmount the ISO if it was mounted and Re-enabling AutoPlay
+    if ($installFile.Extension -eq ".iso" -and $isoDriveLetter) {
+        Log-Message "Unmounting ISO file."
+        Dismount-DiskImage -ImagePath "$scriptDirectory\$installFileName"
+        Log-Message "ISO file unmounted successfully."
+		# Re-enabling AutoPlay after installation
+try {
+    Log-Message "Re-enabling AutoPlay after installation"
+    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" -Name "DisableAutoplay" -Value 0
+    $autoplayStatus = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers").DisableAutoplay
+    if ($autoplayStatus -eq 0) {
+        Log-Message "AutoPlay re-enabled successfully"
+    } else {
+        Log-Message "Failed to re-enable AutoPlay. Manual intervention may be required." "WARNING"
+    }
+} catch {
+    Log-Message "Error re-enabling AutoPlay: $($_.Exception.Message)" "WARNING"
+}
+
+    }
+    
+    # Remove the temporary folder if it exists
+    if (Test-Path $extractPath) {
+        Log-Message "Deleting temporary folder: $extractPath"
+        Remove-Item -Path $extractPath -Recurse -Force
+        Log-Message "Temporary folder deleted successfully."
+    }
+} catch {
+    Log-Message ("Error during cleanup: {0}" -f $_.Exception.Message) "WARNING"
+}
+
+# Step 7: Log completion message
 Log-Message "Installation of MATLAB $MATLABVersion completed" "INFO"
