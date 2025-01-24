@@ -252,3 +252,7 @@ try {
 
 # Step 7: Log completion message
 Log-Message "Installation of MATLAB $MATLABVersion completed" "INFO"
+
+# Step 8: Exit the script
+Write-Host "Script completed."
+exit
